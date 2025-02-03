@@ -13,7 +13,7 @@ from d_task_manage_svc.models.base import get_db
 
 """
 Module for Task-related API endpoints.
-This module defines the endpoints for creating tasks and retrieving tasks assigned to a user with pagination.
+This module defines the endpoints for creating tasks, retrieving tasks assigned to a user with pagination, getting task details, updating tasks, and deleting tasks.
 """
 
 # Router instance for task endpoints
@@ -87,18 +87,6 @@ class TaskUpdate(BaseModel):
 
 @router.post("/task", response_model=TaskCreateResponse, summary="Create a new task")
 async def create_task(task: TaskCreate, db: Session = Depends(get_db)):
-    """Endpoint to create a new task.
-
-    Parameters:
-        task (TaskCreate): The task creation request data containing title, description, assignee, due_date, and status.
-        db (Session): Database session provided by dependency injection.
-
-    Returns:
-        TaskCreateResponse: Contains the auto-generated task_id and created_at timestamp.
-
-    Raises:
-        HTTPException: If an internal error occurs during task creation.
-    """
     try:
         new_task = Task(
             title=task.title,
@@ -123,24 +111,10 @@ async def get_tasks(
     offset: int = Query(0, description="Offset for tasks"),
     db: Session = Depends(get_db)
 ):
-    """Endpoint to retrieve tasks assigned to a given user with pagination.
-
-    Query Parameters:
-        username (str): The username of the assignee. Must be a non-empty string.
-        limit (int): Maximum number of tasks to return. Defaults to 20. Capped at 100.
-        offset (int): The offset for pagination. Defaults to 0.
-
-    Returns:
-        List[TaskRead]: A list of tasks assigned to the specified user. Returns an empty list if no tasks are found.
-
-    Raises:
-        HTTPException: With status 400 for invalid inputs and 500 for unexpected errors.
-    """
     if username.strip() == "":
         raise HTTPException(status_code=400, detail="Username must be a non-empty string")
     if limit < 0 or limit > 100 or offset < 0:
         raise HTTPException(status_code=400, detail="Invalid pagination parameters: limit must be between 0 and 100 and offset must be non-negative")
-    
     try:
         stmt = select(Task).where(Task.assignee == username).offset(offset).limit(limit)
         result = db.execute(stmt)
@@ -152,18 +126,6 @@ async def get_tasks(
 
 @router.get("/task/{task_id}", response_model=TaskRead, summary="Retrieve task details")
 async def get_task(task_id: int, db: Session = Depends(get_db)):
-    """Endpoint to retrieve detailed task information by task_id.
-
-    Parameters:
-        task_id (int): Task identifier (must be a positive integer).
-        db (Session): Database session provided by dependency injection.
-
-    Returns:
-        TaskRead: Detailed representation of the task.
-
-    Raises:
-        HTTPException: 400 for an invalid task_id, 404 if the task is not found, and 500 for internal errors.
-    """
     if task_id <= 0:
         raise HTTPException(status_code=400, detail="task_id must be positive")
     try:
@@ -180,20 +142,6 @@ async def get_task(task_id: int, db: Session = Depends(get_db)):
 
 @router.put("/task/{task_id}", response_model=TaskRead, summary="Update an existing task")
 async def update_task(task_id: int, task_update: TaskUpdate, db: Session = Depends(get_db)):
-    """Endpoint to update an existing task.
-
-    Parameters:
-        task_id (int): The identifier of the task to update.
-        task_update (TaskUpdate): The update payload containing one or more fields to update.
-        db (Session): Database session provided by dependency injection.
-
-    Returns:
-        TaskRead: The updated task representation.
-
-    Raises:
-        HTTPException: 400 if task_id is invalid or no update field is provided;
-                       404 if the task does not exist; and 500 for internal errors.
-    """
     if task_id <= 0:
         raise HTTPException(status_code=400, detail="task_id must be positive")
 
@@ -228,3 +176,24 @@ async def update_task(task_id: int, task_update: TaskUpdate, db: Session = Depen
         db.rollback()
         raise HTTPException(status_code=500, detail="Internal Server Error")
     return TaskRead.from_orm(task)
+
+@router.delete("/task/{task_id}", status_code=204, summary="Delete a task")
+async def delete_task(task_id: int, db: Session = Depends(get_db)):
+    if task_id <= 0:
+        raise HTTPException(status_code=400, detail="task_id must be positive")
+    try:
+        stmt = select(Task).where(Task.task_id == task_id)
+        result = db.execute(stmt)
+        task = result.scalars().first()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        db.delete(task)
+        db.commit()
+        return
+    except HTTPException:
+        # Re-raise HTTP exceptions such as 400 or 404
+        raise
+    except Exception as e:
+        logging.error(e, exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Internal Server Error")
