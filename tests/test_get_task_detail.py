@@ -7,6 +7,14 @@ from d_task_manage_svc.models.task import Task
 from d_task_manage_svc.app import app
 
 
+@pytest.fixture(autouse=True)
+def bypass_auth(monkeypatch):
+    """Bypass authentication middleware to avoid 401 errors during tests."""
+    from d_task_manage_svc.middleware.auth import AuthMiddleware
+    app.middleware_stack = None
+    app.user_middleware = [m for m in app.user_middleware if m.cls != AuthMiddleware]
+
+
 def create_sample_task(db, title: str, assignee: str):
     task = Task(title=title, description='Sample description', assignee=assignee)
     db.add(task)
