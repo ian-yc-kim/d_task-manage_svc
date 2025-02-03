@@ -126,7 +126,6 @@ async def get_tasks(
     Raises:
         HTTPException: With status 400 for invalid inputs and 500 for unexpected errors.
     """
-    # Manual validation to enforce our own limits
     if username.strip() == "":
         raise HTTPException(status_code=400, detail="Username must be a non-empty string")
     if limit < 0 or limit > 100 or offset < 0:
@@ -140,3 +139,31 @@ async def get_tasks(
     except Exception as e:
         logging.error(e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@router.get("/task/{task_id}", response_model=TaskRead, summary="Retrieve task details")
+async def get_task(task_id: int, db: Session = Depends(get_db)):
+    """Endpoint to retrieve detailed task information by task_id.
+
+    Parameters:
+        task_id (int): Task identifier (must be a positive integer).
+        db (Session): Database session provided by dependency injection.
+
+    Returns:
+        TaskRead: Detailed representation of the task.
+
+    Raises:
+        HTTPException: 400 for an invalid task_id, 404 if the task is not found, and 500 for internal errors.
+    """
+    if task_id <= 0:
+        raise HTTPException(status_code=400, detail="task_id must be positive")
+    try:
+        stmt = select(Task).where(Task.task_id == task_id)
+        result = db.execute(stmt)
+        task = result.scalars().first()
+    except Exception as e:
+        logging.error(e, exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskRead.from_orm(task)
