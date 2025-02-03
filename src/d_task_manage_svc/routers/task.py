@@ -1,10 +1,11 @@
 import logging
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from d_task_manage_svc.models.task import Task
@@ -12,7 +13,7 @@ from d_task_manage_svc.models.base import get_db
 
 """
 Module for Task-related API endpoints.
-This module defines the endpoints for creating tasks.
+This module defines the endpoints for creating tasks and retrieving tasks assigned to a user with pagination.
 """
 
 # Router instance for task endpoints
@@ -29,9 +30,9 @@ class TaskCreate(BaseModel):
 
     Attributes:
         title (str): Title of the task.
-        description (str, optional): Detailed description of the task.
-        assignee (str, optional): Person assigned to the task.
-        due_date (datetime, optional): Due date for the task.
+        description (Optional[str]): Detailed description of the task.
+        assignee (Optional[str]): Person assigned to the task.
+        due_date (Optional[datetime]): Due date for the task.
         status (TaskStatus): Status of the task. Must be one of not_started, in_progress, completed. Defaults to not_started.
     """
     title: str = Field(..., description="Title of the task")
@@ -49,6 +50,30 @@ class TaskCreateResponse(BaseModel):
     """
     task_id: int = Field(..., description="The unique identifier of the created task")
     created_at: datetime = Field(..., description="The timestamp when the task was created")
+
+class TaskRead(BaseModel):
+    """Pydantic model for reading task information.
+
+    Attributes:
+        task_id (int): The unique identifier of the task.
+        title (str): The title of the task.
+        description (Optional[str]): The detailed description of the task.
+        assignee (Optional[str]): The user assigned to the task.
+        due_date (Optional[datetime]): The due date of the task.
+        status (str): The status of the task.
+        created_at (datetime): The creation timestamp of the task.
+    """
+    task_id: int
+    title: str
+    description: Optional[str] = None
+    assignee: Optional[str] = None
+    due_date: Optional[datetime] = None
+    status: str
+    created_at: datetime
+
+    model_config = {
+        "from_attributes": True
+    }
 
 @router.post("/task", response_model=TaskCreateResponse, summary="Create a new task")
 async def create_task(task: TaskCreate, db: Session = Depends(get_db)):
@@ -79,4 +104,39 @@ async def create_task(task: TaskCreate, db: Session = Depends(get_db)):
     except Exception as e:
         logging.error(e, exc_info=True)
         db.rollback()
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+@router.get("/task", response_model=List[TaskRead], summary="Retrieve tasks for a user with pagination")
+async def get_tasks(
+    username: str = Query(..., description="Username of the assignee", min_length=1),
+    limit: int = Query(20, description="Limit number of tasks"),
+    offset: int = Query(0, description="Offset for tasks"),
+    db: Session = Depends(get_db)
+):
+    """Endpoint to retrieve tasks assigned to a given user with pagination.
+
+    Query Parameters:
+        username (str): The username of the assignee. Must be a non-empty string.
+        limit (int): Maximum number of tasks to return. Defaults to 20. Capped at 100.
+        offset (int): The offset for pagination. Defaults to 0.
+
+    Returns:
+        List[TaskRead]: A list of tasks assigned to the specified user. Returns an empty list if no tasks are found.
+
+    Raises:
+        HTTPException: With status 400 for invalid inputs and 500 for unexpected errors.
+    """
+    # Manual validation to enforce our own limits
+    if username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username must be a non-empty string")
+    if limit < 0 or limit > 100 or offset < 0:
+        raise HTTPException(status_code=400, detail="Invalid pagination parameters: limit must be between 0 and 100 and offset must be non-negative")
+    
+    try:
+        stmt = select(Task).where(Task.assignee == username).offset(offset).limit(limit)
+        result = db.execute(stmt)
+        tasks = result.scalars().all()
+        return [TaskRead.from_orm(task) for task in tasks]
+    except Exception as e:
+        logging.error(e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal Server Error")
