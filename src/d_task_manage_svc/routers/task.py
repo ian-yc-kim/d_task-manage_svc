@@ -62,6 +62,7 @@ class TaskRead(BaseModel):
         due_date (Optional[datetime]): The due date of the task.
         status (str): The status of the task.
         created_at (datetime): The creation timestamp of the task.
+        updated_at (Optional[datetime]): The timestamp when the task was last updated.
     """
     task_id: int
     title: str
@@ -70,10 +71,19 @@ class TaskRead(BaseModel):
     due_date: Optional[datetime] = None
     status: str
     created_at: datetime
+    updated_at: Optional[datetime] = None
 
     model_config = {
         "from_attributes": True
     }
+
+class TaskUpdate(BaseModel):
+    """Schema for updating an existing task. All fields are optional but at least one is required."""
+    title: Optional[str] = Field(None, description="Updated title of the task")
+    description: Optional[str] = Field(None, description="Updated description of the task")
+    assignee: Optional[str] = Field(None, description="Updated assignee of the task")
+    due_date: Optional[datetime] = Field(None, description="Updated due date of the task")
+    status: Optional[TaskStatus] = Field(None, description="Updated task status")
 
 @router.post("/task", response_model=TaskCreateResponse, summary="Create a new task")
 async def create_task(task: TaskCreate, db: Session = Depends(get_db)):
@@ -166,4 +176,55 @@ async def get_task(task_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Internal Server Error")
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    return TaskRead.from_orm(task)
+
+@router.put("/task/{task_id}", response_model=TaskRead, summary="Update an existing task")
+async def update_task(task_id: int, task_update: TaskUpdate, db: Session = Depends(get_db)):
+    """Endpoint to update an existing task.
+
+    Parameters:
+        task_id (int): The identifier of the task to update.
+        task_update (TaskUpdate): The update payload containing one or more fields to update.
+        db (Session): Database session provided by dependency injection.
+
+    Returns:
+        TaskRead: The updated task representation.
+
+    Raises:
+        HTTPException: 400 if task_id is invalid or no update field is provided;
+                       404 if the task does not exist; and 500 for internal errors.
+    """
+    if task_id <= 0:
+        raise HTTPException(status_code=400, detail="task_id must be positive")
+
+    try:
+        stmt = select(Task).where(Task.task_id == task_id)
+        result = db.execute(stmt)
+        task = result.scalars().first()
+    except Exception as e:
+        logging.error(e, exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    update_data = task_update.dict(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="At least one field must be provided for update")
+
+    for key, value in update_data.items():
+        if key == "status":
+            setattr(task, key, value.value if hasattr(value, "value") else value)
+        else:
+            setattr(task, key, value)
+
+    task.updated_at = datetime.utcnow()
+    try:
+        db.commit()
+        db.refresh(task)
+    except Exception as e:
+        logging.error(e, exc_info=True)
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Internal Server Error")
     return TaskRead.from_orm(task)
