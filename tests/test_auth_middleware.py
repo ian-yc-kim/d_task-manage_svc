@@ -19,18 +19,18 @@ app.include_router(router)
 
 # Create a fake async client to mock httpx.AsyncClient
 class FakeAsyncClient:
-    def __init__(self, status_code):
+    def __init__(self, status_code: int):
         self.status_code = status_code
 
-    async def get(self, url, headers):
+    async def get(self, url: str, headers: dict):
         class FakeResponse:
-            def __init__(self, status_code):
+            def __init__(self, status_code: int):
                 self.status_code = status_code
         return FakeResponse(self.status_code)
 
-    async def post(self, url, json):
+    async def post(self, url: str, json: dict):
         class FakeResponse:
-            def __init__(self, status_code):
+            def __init__(self, status_code: int):
                 self.status_code = status_code
         return FakeResponse(self.status_code)
 
@@ -43,8 +43,8 @@ class FakeAsyncClient:
 
 @pytest.fixture(autouse=True)
 def override_async_client(monkeypatch):
-    # This fixture can be overridden in tests if needed
-    pass
+    # Patch httpx.AsyncClient to return a FakeAsyncClient with status code 200 by default
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *args, **kwargs: FakeAsyncClient(status_code=200))
 
 
 @pytest.mark.asyncio
