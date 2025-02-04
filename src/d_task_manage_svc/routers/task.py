@@ -65,6 +65,7 @@ class TaskRead(BaseModel):
         status (str): The status of the task.
         created_at (datetime): The creation timestamp of the task.
         updated_at (Optional[datetime]): The timestamp when the task was last updated.
+        suggested_instructions (Optional[str]): Auto-generated suggested instructions for the task.
     """
     task_id: int
     title: str
@@ -74,6 +75,7 @@ class TaskRead(BaseModel):
     status: str
     created_at: datetime
     updated_at: Optional[datetime] = None
+    suggested_instructions: Optional[str] = None
 
     model_config = {
         "from_attributes": True
