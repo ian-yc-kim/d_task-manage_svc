@@ -1,15 +1,17 @@
 import logging
+import asyncio
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from d_task_manage_svc.models.task import Task
-from d_task_manage_svc.models.base import get_db
+from d_task_manage_svc.models.base import get_db, SessionLocal
+from d_task_manage_svc.instruction_generator import generate_instructions
 
 """
 Module for Task-related API endpoints.
@@ -85,8 +87,48 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = Field(None, description="Updated due date of the task")
     status: Optional[TaskStatus] = Field(None, description="Updated task status")
 
+
+def _format_instructions(instructions: List[str]) -> str:
+    """Formats the list of instructions into a single string."""
+    return "; ".join(instructions)
+
+
+async def process_instruction_generation(task_id: int, title: str, description: str) -> None:
+    """Background task to generate instructions and update the task record with suggested instructions."""
+    try:
+        instructions = await generate_instructions(title, description)
+        if instructions:
+            instructions_text = _format_instructions(instructions)
+            session = SessionLocal()
+            try:
+                task_obj = session.query(Task).filter(Task.task_id == task_id).first()
+                if task_obj:
+                    task_obj.suggested_instructions = instructions_text
+                    session.commit()
+            except Exception as e:
+                logging.error(e, exc_info=True)
+                session.rollback()
+            finally:
+                session.close()
+    except Exception as e:
+        logging.error(e, exc_info=True)
+
+
+def trigger_instruction_generation(task_id: int, title: str, description: str) -> None:
+    """Synchronous wrapper to schedule the asynchronous instruction generation task."""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(process_instruction_generation(task_id, title, description))
+    except RuntimeError:
+        # No running event loop, so start one temporarily
+        try:
+            asyncio.run(process_instruction_generation(task_id, title, description))
+        except Exception as e:
+            logging.error(e, exc_info=True)
+
+
 @router.post("/task", response_model=TaskCreateResponse, summary="Create a new task")
-async def create_task(task: TaskCreate, db: Session = Depends(get_db)):
+async def create_task(task: TaskCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     try:
         new_task = Task(
             title=task.title,
@@ -98,11 +140,17 @@ async def create_task(task: TaskCreate, db: Session = Depends(get_db)):
         db.add(new_task)
         db.commit()
         db.refresh(new_task)
+
+        # Schedule background task for instruction generation if title and description are provided
+        if new_task.title and new_task.description:
+            background_tasks.add_task(trigger_instruction_generation, new_task.task_id, new_task.title, new_task.description)
+
         return TaskCreateResponse(task_id=new_task.task_id, created_at=new_task.created_at)
     except Exception as e:
         logging.error(e, exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
 
 @router.get("/task", response_model=List[TaskRead], summary="Retrieve tasks for a user with pagination")
 async def get_tasks(
@@ -124,6 +172,7 @@ async def get_tasks(
         logging.error(e, exc_info=True)
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
+
 @router.get("/task/{task_id}", response_model=TaskRead, summary="Retrieve task details")
 async def get_task(task_id: int, db: Session = Depends(get_db)):
     if task_id <= 0:
@@ -140,8 +189,9 @@ async def get_task(task_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Task not found")
     return TaskRead.from_orm(task)
 
+
 @router.put("/task/{task_id}", response_model=TaskRead, summary="Update an existing task")
-async def update_task(task_id: int, task_update: TaskUpdate, db: Session = Depends(get_db)):
+async def update_task(task_id: int, task_update: TaskUpdate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     if task_id <= 0:
         raise HTTPException(status_code=400, detail="task_id must be positive")
 
@@ -175,7 +225,15 @@ async def update_task(task_id: int, task_update: TaskUpdate, db: Session = Depen
         logging.error(e, exc_info=True)
         db.rollback()
         raise HTTPException(status_code=500, detail="Internal Server Error")
+
+    # Determine effective title and description for instruction generation
+    effective_title = task.title
+    effective_description = task.description
+    if effective_title and effective_description:
+        background_tasks.add_task(trigger_instruction_generation, task.task_id, effective_title, effective_description)
+
     return TaskRead.from_orm(task)
+
 
 @router.delete("/task/{task_id}", status_code=204, summary="Delete a task")
 async def delete_task(task_id: int, db: Session = Depends(get_db)):
