@@ -127,6 +127,15 @@ def trigger_instruction_generation(task_id: int, title: str, description: str) -
             asyncio.run(process_instruction_generation(task_id, title, description))
         except Exception as e:
             logging.error(e, exc_info=True)
+            raise
+
+
+def safe_trigger_instruction_generation(task_id: int, title: str, description: str) -> None:
+    """Wrapper to trigger instruction generation and log any exceptions without propagating them."""
+    try:
+        trigger_instruction_generation(task_id, title, description)
+    except Exception as e:
+        logging.error(e, exc_info=True)
 
 
 @router.post("/task", response_model=TaskCreateResponse, summary="Create a new task")
@@ -145,7 +154,9 @@ async def create_task(task: TaskCreate, background_tasks: BackgroundTasks, db: S
 
         # Schedule background task for instruction generation if title and description are provided
         if new_task.title and new_task.description:
-            background_tasks.add_task(trigger_instruction_generation, new_task.task_id, new_task.title, new_task.description)
+            background_tasks.add_task(safe_trigger_instruction_generation, new_task.task_id, new_task.title, new_task.description)
+        else:
+            logging.warning("Background instruction generation not scheduled for task id %s due to missing title or description (title: '%s', description: '%s')", new_task.task_id, new_task.title, new_task.description)
 
         return TaskCreateResponse(task_id=new_task.task_id, created_at=new_task.created_at)
     except Exception as e:
@@ -232,7 +243,9 @@ async def update_task(task_id: int, task_update: TaskUpdate, background_tasks: B
     effective_title = task.title
     effective_description = task.description
     if effective_title and effective_description:
-        background_tasks.add_task(trigger_instruction_generation, task.task_id, effective_title, effective_description)
+        background_tasks.add_task(safe_trigger_instruction_generation, task.task_id, effective_title, effective_description)
+    else:
+        logging.warning("Background instruction generation not scheduled for task id %s due to missing title or description (title: '%s', description: '%s')", task.task_id, effective_title, effective_description)
 
     return TaskRead.from_orm(task)
 
