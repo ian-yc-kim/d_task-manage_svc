@@ -22,6 +22,12 @@ class FakeAsyncClient:
     def __init__(self, status_code):
         self.status_code = status_code
 
+    async def get(self, url, headers):
+        class FakeResponse:
+            def __init__(self, status_code):
+                self.status_code = status_code
+        return FakeResponse(self.status_code)
+
     async def post(self, url, json):
         class FakeResponse:
             def __init__(self, status_code):
@@ -37,7 +43,7 @@ class FakeAsyncClient:
 
 @pytest.fixture(autouse=True)
 def override_async_client(monkeypatch):
-    # This fixture will be overridden in each test if needed
+    # This fixture can be overridden in tests if needed
     pass
 
 
@@ -52,7 +58,7 @@ async def test_no_session_token(client):
 
 @pytest.mark.asyncio
 async def test_invalid_session_token(monkeypatch, client):
-    # Override AsyncClient to simulate an invalid token response
+    # Override AsyncClient to simulate an invalid token response using GET request
     def fake_async_client_invalid(*args, **kwargs):
         return FakeAsyncClient(status_code=401)
     monkeypatch.setattr(httpx, "AsyncClient", fake_async_client_invalid)
@@ -65,7 +71,7 @@ async def test_invalid_session_token(monkeypatch, client):
 
 @pytest.mark.asyncio
 async def test_valid_session_token(monkeypatch, client):
-    # Override AsyncClient to simulate a valid token response
+    # Override AsyncClient to simulate a valid token response using GET request
     def fake_async_client_valid(*args, **kwargs):
         return FakeAsyncClient(status_code=200)
     monkeypatch.setattr(httpx, "AsyncClient", fake_async_client_valid)

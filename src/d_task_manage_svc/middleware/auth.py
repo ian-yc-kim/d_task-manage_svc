@@ -25,10 +25,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             service_url = DEMO_SERVICE_URL
             if not service_url.startswith("http"):
                 service_url = "http://" + service_url
-            validate_url = f"{service_url}/validate"
+            # Update the endpoint to '/auth/session'
+            validate_url = f"{service_url}/auth/session"
 
             async with httpx.AsyncClient() as client:
-                resp = await client.post(validate_url, json={"token": token})
+                # Perform a GET request to the demo service endpoint with session token in headers
+                resp = await client.get(validate_url, headers={"session_token": token})
             
             if resp.status_code != 200:
                 return JSONResponse({"detail": "Invalid or expired session token"}, status_code=401)
